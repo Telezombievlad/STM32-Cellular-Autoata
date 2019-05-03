@@ -1,170 +1,179 @@
-// No copyright. Vladislav Aleinik, 2019
+// Copyright 2019 Vladislav Aleinik
+// ToDo:
+// (1) Add ENCODER support
+// (2) Add PWF
 
 #include "stm32f0xx_ll_rcc.h"
 #include "stm32f0xx_ll_system.h"
+
 #include "stm32f0xx_ll_bus.h"
 #include "stm32f0xx_ll_gpio.h"
 
-#include "stm32f0xx_ll_usart.h"
-
 #include "stm32f0xx_ll_cortex.h"
-#include "stm32f0xx_ll_utils.h"
 #include "stm32f0xx_ll_tim.h"
 
 #include "stm32f0xx_ll_exti.h"
 
-// ToDo:
-// [X] Speedy and stable cursor
-// [X] Keyboard shit
-// [X] Add encoder and 7-segment display
-// [X] Add LED screen
+#include <errno.h>
+#include <math.h>
+#include <stdbool.h>
 
 //=============================================================================================
-// CONFIGURING STUFF
+// GLOBAL MC STATE
 //=============================================================================================
 
-static void rcc_config()
+struct State
 {
-    LL_FLASH_SetLatency(LL_FLASH_LATENCY_1);
+	// Button
+	bool upCountingMode;
 
-    LL_RCC_HSI_Enable();
-    while (LL_RCC_HSI_IsReady() != 1);
-
-    LL_RCC_PLL_ConfigDomain_SYS(LL_RCC_PLLSOURCE_HSI_DIV_2, LL_RCC_PLL_MUL_12);
-
-    LL_RCC_PLL_Enable();
-    while (LL_RCC_PLL_IsReady() != 1);
-
-    LL_RCC_SetAHBPrescaler(LL_RCC_SYSCLK_DIV_1);
-    LL_RCC_SetSysClkSource(LL_RCC_SYS_CLKSOURCE_PLL);
-    while (LL_RCC_GetSysClkSource() != LL_RCC_SYS_CLKSOURCE_STATUS_PLL);
-
-    LL_RCC_SetAPB1Prescaler(LL_RCC_APB1_DIV_1);
-
-    SystemCoreClock = 48000000;
-}
-
-static void systick_config()
-{
-	LL_APB1_GRP2_EnableClock(LL_APB1_GRP2_PERIPH_TIM1);
-
-	LL_TIM_SetPrescaler(TIM1, 48-1);
-
-	// Set timer mode
-	LL_TIM_SetCounterMode(TIM1, LL_TIM_COUNTERMODE_UP);
-
-	// Set auto-reload value
-	LL_TIM_SetAutoReload(TIM1, 1000-1);
-
-	// Enable interrupts
-	LL_TIM_EnableIT_UPDATE(TIM1);
-
-	// Turn the counter on
-	LL_TIM_EnableCounter(TIM1);
-
-	// Set SysTick interrupt priority
-	NVIC_EnableIRQ(TIM1_BRK_UP_TRG_COM_IRQn);
-	NVIC_SetPriority(TIM1_BRK_UP_TRG_COM_IRQn, 0);
-}
-
-static void diods_config()
-{
-	LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_GPIOC);
-
-	LL_GPIO_SetPinMode(GPIOC, LL_GPIO_PIN_8, LL_GPIO_MODE_OUTPUT);
-	LL_GPIO_SetPinMode(GPIOC, LL_GPIO_PIN_9, LL_GPIO_MODE_OUTPUT);
-}
-
-void screen_config()
-{
-
-}
-
-//=============================================================================================
-// MICROCONTROLLER STATE
-//=============================================================================================
-
-const int SIZE_X = 128;
-const int SIZE_Y = 64;
-const unsigned ARR_SIZE = 0x2000;
-struct MC_State
-{
-	// Cell states
-	uint8_t curCells[ARR_SIZE];
-	uint8_t newCells[ARR_SIZE];
-
+	// Cells simulation:
+	uint8_t cursorX;
+	uint8_t cursorY;
+	bool stateUnderCursor;
 	bool simulationPlaying;
+	unsigned iteration;
 
-	// Cursor
-	int cursorX;
-	int cursorY;
-
-	// Simulation tick
-	unsigned tick;
+	// Iteartion timing
+	unsigned iterTick;
+	unsigned stepPeriod;
 };
 
-struct MC_State MC_STATE = {{0}, {0}, 0, 1, 1, 0};
+volatile struct State MC_STATE = {0, 0, 0, 0, false, 0, 0, 1000};
+
+//=============================================================================================
+// RCC_config
+//=============================================================================================
+
+static void RCC_config()
+{
+	LL_FLASH_SetLatency(LL_FLASH_LATENCY_1);
+
+	// Enable Internal High Speed clock
+	LL_RCC_HSI_Enable();
+	while (LL_RCC_HSI_IsReady() != 1);
+
+	// 8MHz /2 * 12 == 48MHz
+	LL_RCC_PLL_ConfigDomain_SYS(LL_RCC_PLLSOURCE_HSI_DIV_2,
+	                            LL_RCC_PLL_MUL_12);
+
+	// Enable PLL
+	LL_RCC_PLL_Enable();
+	while (LL_RCC_PLL_IsReady() != 1);
+
+	// Enabling clocking on AHB bus
+	LL_RCC_SetAHBPrescaler(LL_RCC_SYSCLK_DIV_1);
+	LL_RCC_SetSysClkSource(LL_RCC_SYS_CLKSOURCE_PLL);
+	while (LL_RCC_GetSysClkSource() != LL_RCC_SYS_CLKSOURCE_STATUS_PLL);
+
+	LL_RCC_SetAPB1Prescaler(LL_RCC_APB1_DIV_1);
+
+	SystemCoreClockUpdate();
+}
+
+//=============================================================================================
+// 7-SEGMENT DISPLAY MODULE
+//=============================================================================================
+
+#include "SEG7.h"
+
+//=============================================================================================
+// ENCODER MODULE
+//=============================================================================================
+
+#include "ENCODER.h"
+
+//=============================================================================================
+// BUTTON MODULE
+//=============================================================================================
+
+#include "BUTTON.h"
+
+void OnActualButtonPress()
+{
+	MC_STATE.simulationPlaying = !MC_STATE.simulationPlaying; 
+}
+ 
+//=============================================================================================
+// I2C SCREEN MODULE
+//=============================================================================================
+
+#include "I2C_SCREEN.h"
 
 //=============================================================================================
 // CELLULAR AUTOMATA LOGIC
 //=============================================================================================
 
-#include "CellularAutomata.h"
+#include "CELLS.h"
 
 //=============================================================================================
-// USART INTERACTION
+// USART
 //=============================================================================================
 
 #include "USART.h"
 
-//=============================================================================================
-// RECIEVED COMMANDS
-//=============================================================================================
-
 enum Command
 {
-	MOVE_CURSOR_LEFT,
-	MOVE_CURSOR_RIGHT,
-	MOVE_CURSOR_UP,
-	MOVE_CURSOR_DOWN,
+	MOVE_CURSOR_L,
+	MOVE_CURSOR_R,
+	MOVE_CURSOR_U,
+	MOVE_CURSOR_D,
+	DIRTY_MOVE_CURSOR_L,
+	DIRTY_MOVE_CURSOR_R,
+	DIRTY_MOVE_CURSOR_U,
+	DIRTY_MOVE_CURSOR_D,
 	TOOGLE_CELL_STATE,
 	SIMULATION_PLAY,
 	SIMULATION_PAUSE,
 	SIMULATION_RESET
 };
 
-void executeCommand(uint8_t cmd)
+void executeCommand(enum Command cmd)
 {
+	// If DIRTY
+	if ((cmd & 0xFC) == 0x04 && !MC_STATE.simulationPlaying)
+	{
+		MC_STATE.stateUnderCursor = !MC_STATE.stateUnderCursor;
+	}
+
+	// If MOVE
+	if ((cmd & 0xF8) == 0x00 && !MC_STATE.simulationPlaying)
+		I2C_SCREEN_SetPixel(MC_STATE.cursorX, MC_STATE.cursorY, MC_STATE.stateUnderCursor);
+	
+	// If LEFT
+	if (cmd == MOVE_CURSOR_L || cmd == DIRTY_MOVE_CURSOR_L)
+	{
+		if (MC_STATE.cursorX == 0) MC_STATE.cursorX = SCREEN_SIZE_X - 1;
+		else MC_STATE.cursorX -= 1;
+	}
+
+	// If RIGHT
+	if (cmd == MOVE_CURSOR_R || cmd == DIRTY_MOVE_CURSOR_R)
+	{
+		if (MC_STATE.cursorX == SCREEN_SIZE_X - 1) MC_STATE.cursorX = 0;
+		else MC_STATE.cursorX += 1;
+	}
+
+	// If UP
+	if (cmd == MOVE_CURSOR_U || cmd == DIRTY_MOVE_CURSOR_U)
+	{
+		if (MC_STATE.cursorY == 0) MC_STATE.cursorY = SCREEN_SIZE_Y - 1;
+		else MC_STATE.cursorY -= 1;
+	}
+
+	// If DOWN
+	if (cmd == MOVE_CURSOR_D || cmd == DIRTY_MOVE_CURSOR_D)
+	{
+		if (MC_STATE.cursorY == SCREEN_SIZE_Y - 1) MC_STATE.cursorY = 0;
+		else MC_STATE.cursorY += 1;
+	}
+
 	switch (cmd)
 	{
-		case MOVE_CURSOR_LEFT:
-		{
-			if (MC_STATE.cursorX == 0) MC_STATE.cursorX = SIZE_X - 1;
-			else MC_STATE.cursorX -= 1;
-			break;
-		}
-		case MOVE_CURSOR_RIGHT:
-		{
-			if (MC_STATE.cursorX == SIZE_X - 1) MC_STATE.cursorX = 0;
-			else MC_STATE.cursorX += 1;
-			break;
-		}
-		case MOVE_CURSOR_UP:
-		{
-			if (MC_STATE.cursorY == 0) MC_STATE.cursorY = SIZE_Y - 1;
-			else MC_STATE.cursorY -= 1;
-			break;
-		}
-		case MOVE_CURSOR_DOWN:
-		{
-			if (MC_STATE.cursorY == SIZE_Y - 1) MC_STATE.cursorY = 0;
-			else MC_STATE.cursorY += 1;
-			break;
-		}
 		case TOOGLE_CELL_STATE:
 		{
-			toogleCellState(MC_STATE.cursorX, MC_STATE.cursorY);
-			break;	
+			MC_STATE.stateUnderCursor = !MC_STATE.stateUnderCursor;
+			break;
 		}
 		case SIMULATION_PLAY:
 		{
@@ -178,69 +187,128 @@ void executeCommand(uint8_t cmd)
 		}
 		case SIMULATION_RESET:
 		{
-			resetCells();
+			MC_STATE.simulationPlaying = false;
+			MC_STATE.iteration = 0;
+			CELLS_ResetCells();
 			break;
 		}
 	}
+
+	// If MOVE
+	if ((cmd & 0xF8) == 0x00 && !MC_STATE.simulationPlaying)
+		MC_STATE.stateUnderCursor = I2C_SCREEN_GetPixel(MC_STATE.cursorX, MC_STATE.cursorY);
 }
 
 //=============================================================================================
-// MICROCONTROLLER LOGIC
+// SYSTEM TIMER MODULE
 //=============================================================================================
 
-void tick()
+#include "SYSTICK.h"
+
+void TickHandler(void)
 {
-	MC_STATE.tick = (MC_STATE.tick + 1) % 1000; 
-}
+	LL_TIM_ClearFlag_UPDATE(TIM1);
 
-//=============================================================================================
-// INTERACT WITH MC
-//=============================================================================================
+	//================================
+	// SEG7
+	//================================
 
-void writeState()
-{
-	tick();
-  
-	if (MC_STATE.tick > 500) LL_GPIO_SetOutputPin  (GPIOC, LL_GPIO_PIN_8);   
-	else                     LL_GPIO_ResetOutputPin(GPIOC, LL_GPIO_PIN_8);  
- 
-	if (MC_STATE.tick > 500) LL_GPIO_SetOutputPin  (GPIOC, LL_GPIO_PIN_9);   
-	else                     LL_GPIO_ResetOutputPin(GPIOC, LL_GPIO_PIN_9);
-}
+	// Update 7-segment display number
+	SEG7_SetNumber(MC_STATE.iteration);
 
-//=============================================================================================
-// INTERRUPTS
-//=============================================================================================
+	// Push SEG7 state to MC
+	SEG7_SetNumberQuarter(SYSTICK_GetTicks());
+	SEG7_PushDisplayStateToMC();
 
-void TIM1_CC_IRQHandler(void)
-{
-	LL_TIM_ClearFlag_CC1(TIM1);
+	//================================
+	// BUTTON
+	//================================
 
-	LL_GPIO_SetOutputPin(GPIOC, LL_GPIO_PIN_8);
+    // Update button state
+	BUTTON_UpdateState();
 
-	if (!isEmptyQueue())
+	//================================
+	// ENCODER
+	//================================
+
+	if (ENCODER_GetValue() < 100) ENCODER_SetValue(110);
+	if (ENCODER_GetValue() > 500) ENCODER_SetValue(490);
+
+	MC_STATE.stepPeriod = ENCODER_GetValue()/2;
+	MC_STATE.iterTick = (MC_STATE.iterTick + 1) % MC_STATE.stepPeriod;
+
+	//================================
+	// USART
+	//================================
+
+	if (USART_CommandReady())  
 	{
-		executeCommand(waitForCommand());
+		uint8_t cmd = USART_GetCommand();  
+
+		executeCommand(cmd);
+
+		I2C_SCREEN_Flush();
 	}
 
-	writeState();
+	//================================
+	// CURSOR
+	//================================
+
+	if (!MC_STATE.simulationPlaying)
+	{
+		if (SYSTICK_GetTicks() % 1000 == 0)
+		{
+			I2C_SCREEN_WriteUpdatePixel(MC_STATE.cursorX, MC_STATE.cursorY, 0);
+		}
+		
+		if (SYSTICK_GetTicks() % 1000 == 500)
+		{
+			I2C_SCREEN_WriteUpdatePixel(MC_STATE.cursorX, MC_STATE.cursorY, 1);
+		} 
+	}  
+ 
+	//================================
+	// CELLS
+	//================================
+
+	if (MC_STATE.simulationPlaying && MC_STATE.iterTick == 0)
+	{
+		MC_STATE.iteration = (MC_STATE.iteration + 1) % 10000;
+
+		I2C_SCREEN_SetPixel(MC_STATE.cursorX, MC_STATE.cursorY, MC_STATE.stateUnderCursor);
+
+		CELLS_CalculateIteration();
+
+		MC_STATE.stateUnderCursor = I2C_SCREEN_GetPixel(MC_STATE.cursorX, MC_STATE.cursorY);
+		I2C_SCREEN_Flush();
+	}
 }
 
 //=============================================================================================
 // MAIN
 //=============================================================================================
 
-int main()
+int main(void)
 {
-	rcc_config();
-	systick_config(); 
-	screen_config();    
-	diods_config();       
-	usart_config();   
-   
-	LL_GPIO_SetOutputPin(GPIOC, LL_GPIO_PIN_9);      
+	RCC_config();
+	
+	SEG7_Config();
 
-	while (true) {}
+	ENCODER_Config();
+
+	BUTTON_Config();
+	BUTTON_SetHandlerOnActualPress(OnActualButtonPress);
+
+	I2C_SCREEN_Config();
+
+	I2C_SCREEN_Clear(0);
+	I2C_SCREEN_Flush();
+
+	USART_Config();	
+
+	SYSTICK_Config(TickHandler);
+
+	while (1) {}
 
 	return 0;
 }

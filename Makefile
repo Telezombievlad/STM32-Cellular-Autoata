@@ -38,10 +38,10 @@ DEFINES = -DSTM32 -DSTM32F0 -DSTM32F051x8 -DHEAP_SIZE=$(HEAP_SIZE)
 
 PREFIX = arm-none-eabi
 
-CC = $(PREFIX)-g++
+CC = $(PREFIX)-gcc
 AS = $(PREFIX)-as
 AR = $(PREFIX)-ar
-LD = $(PREFIX)-g++
+LD = $(PREFIX)-gcc
 NM = $(PREFIX)-nm
 OBJCOPY = $(PREFIX)-objcopy
 OBJDUMP = $(PREFIX)-objdump
@@ -58,7 +58,7 @@ MCUFLAGS = -mcpu=cortex-m0 -mlittle-endian -mfloat-abi=soft -mthumb \
 
 DEBUG_OPTIMIZE_FLAGS = -O0 -ggdb -gdwarf-2
 
-CFLAGS = -Wall -Wextra -std=c++11 -O1
+CFLAGS = -Wall -Wextra -std=c11 -Os
 CFLAGS_EXTRA = -nostartfiles -nodefaultlibs -nostdlib \
                -fdata-sections -ffunction-sections
 
@@ -116,8 +116,6 @@ $(PROJECT).elf: $(OBJS)
 
 %.asm: %.elf
 	$(OBJDUMP) -dwh $< > $@
-
-# Interact through USART
-
+	
 interact:
 	python3 interact.py

@@ -32,13 +32,19 @@ if __name__ == '__main__':
 	while True:
 		inputStr = input()
 
-		if inputStr == "l":
-			serial_send(dev, 0)
-		if inputStr == "r":
-			serial_send(dev, 1)
-		if inputStr == "u":
-			serial_send(dev, 2)
-		if inputStr == "d":
-			serial_send(dev, 3)
-		if inputStr == "quit":
-			break
+		for ch in inputStr:
+			if ch == 'a': serial_send(dev, 0)
+			if ch == 'd': serial_send(dev, 1)
+			if ch == 'w': serial_send(dev, 2)
+			if ch == 's': serial_send(dev, 3)
+			if ch == 'j': serial_send(dev, 4)
+			if ch == 'l': serial_send(dev, 5)
+			if ch == 'i': serial_send(dev, 6)
+			if ch == 'k': serial_send(dev, 7)
+			if ch == ' ': serial_send(dev, 8)
+
+		if inputStr ==  "play": serial_send(dev, 9)
+		if inputStr == "pause": serial_send(dev, 10)
+		if inputStr == "reset": serial_send(dev, 11)
+		if inputStr ==  "quit": break
+		
